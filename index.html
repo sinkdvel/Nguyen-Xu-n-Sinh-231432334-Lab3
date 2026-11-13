@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Giám sát bể thủy sản - RTOS</title>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  body{font-family:Arial,sans-serif;background:#f3f3f8;text-align:center;margin:0;padding:16px}
+  .card{background:#fff;max-width:520px;margin:14px auto;padding:18px;border-radius:12px;box-shadow:0 1px 4px #0002}
+  button{color:#fff;border:0;border-radius:6px;padding:10px 16px;margin:4px;font-size:16px;cursor:pointer}
+  .blue{background:#007bff}.green{background:#28a745}.red{background:#dc3545}
+  .on{color:green}.off{color:#c00}
+</style>
+</head>
+<body>
+<h1>HỆ THỐNG GIÁM SÁT MỰC NƯỚC & NHIỆT ĐỘ (RTOS)</h1>
+<p>Trạng thái MQTT: <b id="status" class="off">Chưa kết nối</b></p>
+
+<div class="card">
+  <h3>Thông số hiện tại</h3>
+  <p>Mực nước: <b class="level-value">--</b> cm</p>
+  <p>Nhiệt độ: <b class="temp-value">--</b> °C</p>
+  <p>Chế độ: <b class="mode-value">--</b></p>
+  <p>Bơm vào: <b class="pump-value">--</b> | Van ra: <b class="valve-value">--</b></p>
+</div>
+
+<div class="card">
+  <h3>Biểu đồ thời gian thực</h3>
+  <canvas id="chartLevel" height="140"></canvas>
+  <canvas id="chartTemp" height="140"></canvas>
+</div>
+
+<div class="card">
+  <h3>Điều khiển Thủ công</h3>
+  <p>Lệnh vừa gửi: <b id="lastcmd">--</b></p>
+  <button class="blue"  onclick="send({mode:'AUTO'})">Chế độ AUTO</button><br>
+  <button class="green" onclick="send({mode:'MANUAL',pump:50})">Bơm 50%</button>
+  <button class="green" onclick="send({mode:'MANUAL',pump:100})">Bơm 100%</button>
+  <button class="red"   onclick="send({mode:'MANUAL',pump:0})">Tắt Bơm</button><br>
+  <button class="green" onclick="send({mode:'MANUAL',valve:true})">Mở Van</button>
+  <button class="red"   onclick="send({mode:'MANUAL',valve:false})">Đóng Van</button>
+</div>
+
+<script>
+const TOPIC_DATA = 'aquaculture/ks2026/data';
+const TOPIC_CONTROL = 'aquaculture/ks2026/control';
+const client = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
+const $ = (c) => document.querySelector(c);
+
+function makeChart(id, label, color){
+  return new Chart($(id), {type:'line',
+    data:{labels:[],datasets:[{label:label,data:[],borderColor:color,tension:0.3}]},
+    options:{animation:false}});
+}
+const chartLevel = makeChart('#chartLevel','Mực nước (cm)','#007bff');
+const chartTemp  = makeChart('#chartTemp','Nhiệt độ (°C)','#e67e22');
+
+function pushPoint(chart, value){
+  chart.data.labels.push(new Date().toLocaleTimeString());
+  chart.data.datasets[0].data.push(value);
+  if(chart.data.labels.length > 30){
+    chart.data.labels.shift(); chart.data.datasets[0].data.shift();
+  }
+  chart.update();
+}
+
+client.on('connect', () => {
+  $('#status').textContent = 'Đã kết nối'; $('#status').className = 'on';
+  client.subscribe(TOPIC_DATA);
+});
+client.on('close', () => {
+  $('#status').textContent = 'Mất kết nối'; $('#status').className = 'off';
+});
+client.on('message', (topic, msg) => {
+  const d = JSON.parse(msg.toString());
+  $('.level-value').textContent = d.level.toFixed(1);
+  $('.temp-value').textContent  = d.temp.toFixed(1);
+  $('.mode-value').textContent  = d.mode;
+  $('.pump-value').textContent  = d.pump > 0 ? 'ON (' + d.pump + '%)' : 'OFF';
+  $('.valve-value').textContent = d.valve ? 'OPEN' : 'CLOSE';
+  pushPoint(chartLevel, d.level);
+  pushPoint(chartTemp, d.temp);
+});
+function send(obj){
+  const txt = JSON.stringify(obj);
+  if(!client.connected){ $('#lastcmd').textContent = 'Chưa kết nối MQTT!'; return; }
+  client.publish(TOPIC_CONTROL, txt, {qos:0}, (err) => {
+    $('#lastcmd').textContent = err ? 'Lỗi gửi: ' + err.message : txt;
+  });
+}
+</script>
+</body>
+</html>
